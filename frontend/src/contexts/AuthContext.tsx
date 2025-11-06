@@ -43,7 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(null);
       } else {
         const data = await res.json();
-        setUser(data.user ?? null);
+        setUser(data.userId ?? null);
       }
     } catch (err) {
       setUser(null);
@@ -123,7 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider value={{ user, loading, signUp, signIn, signOut }}>
-      {children}
+      { children }
     </AuthContext.Provider>
   );
 }

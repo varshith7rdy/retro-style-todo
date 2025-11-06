@@ -7,7 +7,7 @@ export const authentication = (req, res, next)=>{
 	const tokenHeader = req.headers["authorization"];
 	
 	if(!tokenHeader){
-		res.status(404).send("Unauthorized Login attempt")
+		res.status(404).send({message:"Unauthorized Login attempt"})
 	}
 
 	if(!tokenHeader.startsWith("Bearer")){
@@ -18,16 +18,12 @@ export const authentication = (req, res, next)=>{
 	try{
 
 		const decoded = jwt.verify(token, process.env.JWT_SECRET)
-		// console.log(decoded);
 		req.user = decoded
-		// res.send({user: decoded})
 		next();
 	}
 	catch(err)
 	{
-		console.log("Error has occured while authenticating");
-		res.send("Error occured while logging").status(404);
-        return
+		res.send({message:"Error occured while logging"}).status(404);
 	}
 
 }

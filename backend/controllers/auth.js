@@ -42,14 +42,15 @@ export async function login(req, res) {
         return;
     }
     else{
+
         const salt = exists.rows[0].salt;
         const hashedPassword = createHmac('sha256', salt).update(password).digest('hex')       
         const text1 = 'select * from users where password_hash = ($1)'
         const value1 = await pool.query(text1, [hashedPassword])
-        console.log(value1.rowCount);
         if(!value1.rowCount){
-            res.status(400).send(`Incorrect Password`)
+            res.status(400).send({message:`Incorrect Password`})
         }
+        return
     }
     const userId = exists.rows[0].id;
     const payload = {
@@ -57,10 +58,10 @@ export async function login(req, res) {
         userId : userId
     }
     const token = jwt.sign(payload, process.env.JWT_SECRET);
-    console.log(req.user);
+    // console.log(req.user);
     
-    res.cookie("user_id", userId, {
-    })
+    // res.cookie("user_id", userId, {
+    // })
     res.json({
         status: "success",
         user : email,
@@ -70,12 +71,13 @@ export async function login(req, res) {
 
 export async function verify(req, res) {
 
-    // const 
     const value = req.headers["authorization"];
     const token = value.split(" ")[1];
-    const result = jwt.verify(token, process.env.JWT_SECRET)
-    console.log(result);
-    res.send({
-        message: "success"
-    }).status(200)
+    try{
+        const result = jwt.verify(token, process.env.JWT_SECRET)
+        res.json(result).status(200)
+    }
+    catch{
+        res.status(404);
+    }
 }

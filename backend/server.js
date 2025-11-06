@@ -22,8 +22,7 @@ dotenv.config()
 const PORT = process.env.PORT
 
 app.use("/api/auth", router)
-app.use(authentication)
-app.use("/api/todos", router1);
+app.use("/api/todos", authentication, router1);
 
 app.listen(PORT, async ()=>{
     console.log(`Server is running on ${PORT}`);

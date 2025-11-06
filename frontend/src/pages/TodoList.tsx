@@ -1,17 +1,17 @@
 import { useState, useEffect } from 'react';
-import { Check, X, Plus, LogOut, Trash2 } from 'lucide-react';
+import { Check, X, Plus, LogOut, Trash2, Pencil } from 'lucide-react';
 import { Todo } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function TodoList() {
-
+  
   const [todos, setTodos] = useState<Todo[]>([]);
   const [newTodo, setNewTodo] = useState('');
   const [loading, setLoading] = useState(true);
   const [notification, setNotification] = useState('');
-  const { user, signOut } = useAuth();
-
-  useEffect(() => {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+  const { user, signOut } = useAuth();  useEffect(() => {
     if (user) {
       loadTodos();
     } else {
@@ -109,9 +109,76 @@ export default function TodoList() {
       setTodos((prev) => prev.map((t) => (t.id === todo.id ? data : t)));
       showNotification('Todo updated!');
     } catch (err) {
-      // Revert optimistic update
+      
       setTodos((prev) => prev.map((t) => (t.id === todo.id ? todo : t)));
       console.error('Error updating todo:', err);
+    }
+  };
+
+  const startEditing = (todo: Todo) => {
+    setEditingId(todo.id);
+    setEditText(todo.title);
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditText('');
+  };
+
+  const updateTodoTitle = async (todo: Todo, newTitle: string) => {
+    if (newTitle.trim() === '' || newTitle === todo.title) {
+      cancelEditing();
+      return;
+    }
+
+    // Optimistically update
+    const originalTitle = todo.title;
+    setTodos((prev) =>
+      prev.map((t) =>
+        t.id === todo.id
+          ? { ...t, title: newTitle, updated_at: new Date().toISOString() }
+          : t
+      )
+    );
+    cancelEditing();
+
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/todos/${todo.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ title: newTitle }),
+      });
+
+      if (!res.ok) {
+        throw new Error('Error updating todo title');
+      }
+
+      const data = await res.json();
+      setTodos((prev) => prev.map((t) => (t.id === todo.id ? data : t)));
+      showNotification('Todo updated!');
+    } catch (err) {
+      // Revert on error
+      setTodos((prev) =>
+        prev.map((t) =>
+          t.id === todo.id
+            ? { ...t, title: originalTitle }
+            : t
+        )
+      );
+      console.error('Error updating todo:', err);
+    }
+  };
+
+  const handleEditKeyDown = (e: React.KeyboardEvent, todo: Todo) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      updateTodoTitle(todo, editText);
+    } else if (e.key === 'Escape') {
+      cancelEditing();
     }
   };
 
@@ -209,16 +276,53 @@ export default function TodoList() {
                     >
                       {todo.completed && <Check size={16} className="text-black" />}
                     </button>
-                    <span
-                      className={`font-mono ${
-                        todo.completed
-                          ? 'text-green-600 line-through'
-                          : 'text-green-400'
-                      }`}
-                      style={{ textDecoration: todo.completed ? 'line-through' : 'none' }}
-                    >
-                      {todo.title || <span className="text-red-500">(No title)</span>}
-                    </span>
+                    {editingId === todo.id ? (
+                      <div className="flex-1 flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          onKeyDown={(e) => handleEditKeyDown(e, todo)}
+                          className="flex-1 bg-black border-2 border-green-500 text-green-400 px-2 py-1 font-mono focus:outline-none focus:border-green-300"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => updateTodoTitle(todo, editText)}
+                          className="text-green-500 hover:text-green-400 border-2 border-green-500 hover:border-green-400 p-1"
+                        >
+                          <Check size={16} />
+                        </button>
+                        <button
+                          onClick={cancelEditing}
+                          className="text-red-500 hover:text-red-400 border-2 border-red-500 hover:border-red-400 p-1"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex-1 flex items-center gap-2">
+                        <span
+                          className={`font-mono flex-1 ${
+                            todo.completed
+                              ? 'text-green-600 line-through'
+                              : 'text-green-400'
+                          }`}
+                          style={{ textDecoration: todo.completed ? 'line-through' : 'none' }}
+                          onDoubleClick={() => !todo.completed && startEditing(todo)}
+                        >
+                          {todo.title || <span className="text-red-500">(No title)</span>}
+                        </span>
+                        {!todo.completed && (
+                          <button
+                            onClick={() => startEditing(todo)}
+                            className="text-green-500 hover:text-green-400 border-2 border-green-500 hover:border-green-400 p-1"
+                            title="Edit task"
+                          >
+                            <Pencil size={16} />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     <span className="text-xs text-green-700 font-mono">
