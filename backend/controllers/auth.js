@@ -49,8 +49,8 @@ export async function login(req, res) {
         const value1 = await pool.query(text1, [hashedPassword])
         if(!value1.rowCount){
             res.status(400).send({message:`Incorrect Password`})
+            return
         }
-        return
     }
     const userId = exists.rows[0].id;
     const payload = {
