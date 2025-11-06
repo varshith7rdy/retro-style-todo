@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Check, X, Plus, LogOut, Trash2 } from 'lucide-react';
-import { supabase, Todo } from '../lib/supabase';
+import { Todo } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function TodoList() {
+
   const [todos, setTodos] = useState<Todo[]>([]);
   const [newTodo, setNewTodo] = useState('');
   const [loading, setLoading] = useState(true);
@@ -11,57 +12,35 @@ export default function TodoList() {
   const { user, signOut } = useAuth();
 
   useEffect(() => {
-    loadTodos();
-    subscribeToTodos();
-  }, []);
+    if (user) {
+      loadTodos();
+    } else {
+      setTodos([]);
+      setLoading(false);
+    }
+  }, [user]);
 
   const loadTodos = async () => {
-    const { data, error } = await supabase
-      .from('todos')
-      .select('*')
-      .order('created_at', { ascending: false });
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const headers: Record<string, string> = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
 
-    if (error) {
-      console.error('Error loading todos:', error);
-    } else {
-      setTodos(data || []);
+      const res = await fetch('/api/todos', { headers });
+      if (!res.ok) {
+        console.error('Failed to load todos');
+        setTodos([]);
+      } else {
+        const data = await res.json();
+        setTodos(data || []);
+      }
+    } catch (err) {
+      console.error('Error loading todos:', err);
+      setTodos([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
-
-  const subscribeToTodos = () => {
-    const channel = supabase
-      .channel('todos-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'todos',
-          filter: `user_id=eq.${user?.id}`,
-        },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setTodos((current) => [payload.new as Todo, ...current]);
-            showNotification('New todo added!');
-          } else if (payload.eventType === 'UPDATE') {
-            setTodos((current) =>
-              current.map((todo) =>
-                todo.id === payload.new.id ? (payload.new as Todo) : todo
-              )
-            );
-            showNotification('Todo updated!');
-          } else if (payload.eventType === 'DELETE') {
-            setTodos((current) => current.filter((todo) => todo.id !== payload.old.id));
-            showNotification('Todo deleted!');
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   };
 
   const showNotification = (message: string) => {
@@ -72,35 +51,89 @@ export default function TodoList() {
   const addTodo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTodo.trim()) return;
-
-    const { error } = await supabase.from('todos').insert({
+    const tempId = `temp-${Date.now()}`;
+    const optimisticTodo: Todo = {
+      id: tempId,
+      user_id: user?.id || '',
       title: newTodo,
-      user_id: user?.id,
-    });
-
-    if (error) {
-      console.error('Error adding todo:', error);
-    } else {
-      setNewTodo('');
+      completed: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    setTodos((prev) => [optimisticTodo, ...prev]);
+    setNewTodo('');
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/todos', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ title: optimisticTodo.title }),
+      });
+      if (!res.ok) {
+        throw new Error('Error adding todo');
+      }
+      const data = await res.json();
+      // Replace the optimistic todo with the real one (by id)
+      setTodos((prev) => prev.map((t) => (t.id === tempId ? data : t)));
+      showNotification('New todo added!');
+    } catch (err) {
+      setTodos((prev) => prev.filter((t) => t.id !== tempId));
+      console.error('Error adding todo:', err);
     }
   };
 
   const toggleTodo = async (todo: Todo) => {
-    const { error } = await supabase
-      .from('todos')
-      .update({ completed: !todo.completed, updated_at: new Date().toISOString() })
-      .eq('id', todo.id);
-
-    if (error) {
-      console.error('Error updating todo:', error);
+    // Optimistically update UI
+    setTodos((prev) =>
+      prev.map((t) =>
+        t.id === todo.id ? { ...t, completed: !t.completed, updated_at: new Date().toISOString() } : t
+      )
+    );
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/todos/${todo.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ completed: !todo.completed }),
+      });
+      if (!res.ok) {
+        throw new Error('Error updating todo');
+      }
+      const data = await res.json();
+      setTodos((prev) => prev.map((t) => (t.id === todo.id ? data : t)));
+      showNotification('Todo updated!');
+    } catch (err) {
+      // Revert optimistic update
+      setTodos((prev) => prev.map((t) => (t.id === todo.id ? todo : t)));
+      console.error('Error updating todo:', err);
     }
   };
 
   const deleteTodo = async (id: string) => {
-    const { error } = await supabase.from('todos').delete().eq('id', id);
-
-    if (error) {
-      console.error('Error deleting todo:', error);
+    // Optimistically remove from UI
+    const prevTodos = todos;
+    setTodos((prev) => prev.filter((t) => t.id !== id));
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/todos/${id}`, {
+        method: 'DELETE',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!res.ok) {
+        throw new Error('Error deleting todo');
+      }
+      showNotification('Todo deleted!');
+    } catch (err) {
+      setTodos(prevTodos);
+      console.error('Error deleting todo:', err);
     }
   };
 
@@ -172,6 +205,7 @@ export default function TodoList() {
                           ? 'bg-green-500 border-green-500'
                           : 'border-green-500 hover:border-green-400'
                       }`}
+                      title={todo.completed ? 'Mark as incomplete' : 'Mark as complete'}
                     >
                       {todo.completed && <Check size={16} className="text-black" />}
                     </button>
@@ -181,13 +215,23 @@ export default function TodoList() {
                           ? 'text-green-600 line-through'
                           : 'text-green-400'
                       }`}
+                      style={{ textDecoration: todo.completed ? 'line-through' : 'none' }}
                     >
-                      {todo.title}
+                      {todo.title || <span className="text-red-500">(No title)</span>}
                     </span>
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="text-xs text-green-700 font-mono">
+                      Created: {new Date(todo.created_at).toLocaleString()}
+                    </span>
+                    {todo.completed && (
+                      <span className="text-xs text-green-600 font-mono">Completed</span>
+                    )}
                   </div>
                   <button
                     onClick={() => deleteTodo(todo.id)}
                     className="text-red-500 hover:text-red-400 border-2 border-red-500 hover:border-red-400 p-1 transition-colors"
+                    title="Delete task"
                   >
                     <Trash2 size={16} />
                   </button>
